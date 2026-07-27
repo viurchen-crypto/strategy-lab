@@ -55,6 +55,7 @@ const response: BacktestResponse = {
       code: "01",
       name: "SMA 10/30 Cross",
       family: "trend",
+      horizon: "daily",
       description: "Short trend filter.",
       parameters: { fast: 10, slow: 30 },
       metrics: metrics(0.1, 0.8),
@@ -92,6 +93,7 @@ const response: BacktestResponse = {
       code: "04",
       name: "Donchian 20 Breakout",
       family: "breakout",
+      horizon: "position",
       description: "Channel breakout.",
       parameters: { lookback: 20 },
       metrics: metrics(0.3, 1.5),
@@ -104,14 +106,25 @@ const response: BacktestResponse = {
   ],
 };
 
+/** Hermes is a local-only bridge, so tests answer for it rather than reaching it. */
+const hermesReply = (text: string) =>
+  new Response(`event: delta\ndata: ${JSON.stringify({ text })}\n\nevent: done\ndata: {}\n\n`, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+
 const stubFetch = (backtest: () => Response) =>
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) =>
-      url === "/api/runs"
-        ? new Response(JSON.stringify({ runs: [], configured: true }), { status: 200 })
-        : backtest(),
-    ),
+    vi.fn(async (url: string) => {
+      if (url === "/api/runs") {
+        return new Response(JSON.stringify({ runs: [], configured: true }), { status: 200 });
+      }
+      if (url === "/api/hermes") {
+        return hermesReply("A Sharpe ratio is return per unit of volatility.");
+      }
+      return backtest();
+    }),
   );
 
 beforeEach(() => {
@@ -284,13 +297,46 @@ describe("strategy dashboard", () => {
     expect(screen.getByLabelText("Symbol")).toHaveValue("BTC-USD");
   });
 
-  it("reports an unknown command without refetching", async () => {
+  it("reports an unknown slash command without refetching", async () => {
     render(<Home />);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/backtest", expect.anything()));
     const before = (fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
-    await command("frobnicate");
+    // The slash is what makes it a command; without it this would be a question.
+    await command("/frobnicate");
     expect(await screen.findByText(/Unknown command/)).toBeTruthy();
     expect((fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(before);
+  });
+
+  it("sends plain English to Hermes instead of erroring on it", async () => {
+    render(<Home />);
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/backtest", expect.anything()));
+
+    await command("what is a sharpe ratio");
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith("/api/hermes", expect.objectContaining({ method: "POST" })),
+    );
+    // The answer lands in the chat window, which the question opened.
+    expect(await screen.findByText(/return per unit of volatility/)).toBeTruthy();
+    expect(screen.queryByText(/Unknown command/)).toBeNull();
+  });
+
+  it("gives Hermes the run's actual numbers to answer from", async () => {
+    const { container } = render(<Home />);
+    // The context follows the selection, so pick the flagged strategy first.
+    fireEvent.click(await findInCatalog(container, "SMA 10/30 Cross"));
+    await command("is that any good");
+
+    await waitFor(() => {
+      const calls = (fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls;
+      const last = calls.filter(([url]) => url === "/api/hermes").at(-1);
+      const body = JSON.parse(String(last?.[1]?.body));
+      expect(body.context).toContain("QQQ");
+      expect(body.context).toContain("Donchian 20 Breakout");
+      // The caveats are the most useful thing it can bring up, so they travel too.
+      expect(body.context).toContain("too few to be statistically meaningful");
+      expect(body.messages.at(-1)).toMatchObject({ role: "user", content: "is that any good" });
+    });
   });
 
   it("hides trades that have not been reached by the playback cursor", async () => {
@@ -397,7 +443,8 @@ describe("strategy dashboard", () => {
       "aria-pressed",
       "true",
     );
-    expect(screen.getAllByRole("button", { name: /Donchian 20 Breakout/i })).toHaveLength(2);
+    // The catalog row, its compare toggle, and the leaderboard row.
+    expect(screen.getAllByRole("button", { name: /Donchian 20 Breakout/i })).toHaveLength(3);
     openTab(/TUNING/);
     expect(screen.getByRole("button", { name: "Export selected strategy trades as CSV" })).toBeTruthy();
   });

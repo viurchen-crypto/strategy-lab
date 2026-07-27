@@ -6,7 +6,7 @@ import { loadSeries, type LoadedSeries } from "./market/store";
 import { selectWindow } from "./market/window";
 import { buildMetrics, type PerformanceMetrics } from "./metrics";
 import { DEFAULT_RANKING, scoreCandidates } from "./ranking";
-import { STRATEGY_CATALOG, type StrategyFamily } from "./strategies/catalog";
+import { STRATEGY_CATALOG, type StrategyFamily, type StrategyHorizon } from "./strategies/catalog";
 import { generateSignals, resolveParameters, StrategyConfigError, toPositions } from "./strategies/run";
 
 /** Caps the payload for very long intraday histories while keeping the most recent window. */
@@ -41,6 +41,7 @@ export interface StrategyRun {
   readonly code: string;
   readonly name: string;
   readonly family: StrategyFamily;
+  readonly horizon: StrategyHorizon;
   readonly description: string;
   readonly parameters: Record<string, number>;
   readonly metrics: PerformanceMetrics;
@@ -197,6 +198,7 @@ export async function runBacktestSuite(request: BacktestRequest): Promise<Backte
       code: entry.strategy.code,
       name: entry.strategy.name,
       family: entry.strategy.family,
+      horizon: entry.strategy.horizon,
       description: entry.strategy.description,
       parameters: entry.parameters,
       metrics: roundMetrics(entry.result.metrics),

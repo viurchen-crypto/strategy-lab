@@ -7,6 +7,8 @@ import { isIntraday } from "@/lib/format";
 interface PriceChartProps {
   bars: BarTuple[];
   strategy: StrategyRun;
+  /** Extra equity curves overlaid for comparison; the focused one keeps its markers. */
+  compared?: readonly StrategyRun[];
   benchmarkEquity: number[];
   timeframe: string;
   showBenchmark: boolean;
@@ -62,6 +64,30 @@ function readPalette(): ChartPalette {
   };
 }
 
+const SERIES_FALLBACK = ["#f6c96b", "#c084fc", "#fb923c", "#4ade80", "#f472b6"];
+
+/** The comparison colours, read from the same tokens the legend swatches use. */
+function useSeriesColors(): string[] {
+  const [colors, setColors] = useState<string[]>(SERIES_FALLBACK);
+
+  useEffect(() => {
+    const sync = () => {
+      const style = getComputedStyle(document.documentElement);
+      setColors(
+        SERIES_FALLBACK.map(
+          (fallback, index) => style.getPropertyValue(`--series-${index + 1}`).trim() || fallback,
+        ),
+      );
+    };
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, { attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return colors;
+}
+
 /**
  * Republishes the palette whenever the theme attribute on the root changes,
  * so flipping to light mode rebuilds the chart instead of leaving dark candles
@@ -92,6 +118,7 @@ function useChartPalette(): ChartPalette {
 export function PriceChart({
   bars,
   strategy,
+  compared = [],
   benchmarkEquity,
   timeframe,
   showBenchmark,
@@ -101,6 +128,7 @@ export function PriceChart({
   const container = useRef<HTMLDivElement>(null);
   const applyCursor = useRef<((index: number) => void) | null>(null);
   const palette = useChartPalette();
+  const seriesColors = useSeriesColors();
 
   useEffect(() => {
     const element = container.current;
@@ -170,6 +198,21 @@ export function PriceChart({
           )
         : undefined;
 
+      // One line per compared strategy, in the same order the legend lists them.
+      const overlays = compared.map((entry, index) =>
+        chart.addSeries(
+          LineSeries,
+          {
+            color: seriesColors[index % seriesColors.length],
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            title: entry.code,
+          },
+          1,
+        ),
+      );
+
       const markers = createSeriesMarkers(price, []);
 
       // The out-of-sample boundary is drawn as a vertical band of one marker so
@@ -200,6 +243,14 @@ export function PriceChart({
             value,
           })),
         );
+        overlays.forEach((series, index) => {
+          series.setData(
+            compared[index].equity.slice(0, end).map((value, position) => ({
+              time: bars[position][0] as never,
+              value,
+            })),
+          );
+        });
 
         const lastTime = visible.at(-1)?.[0] ?? 0;
         markers.setMarkers([
@@ -254,7 +305,7 @@ export function PriceChart({
     };
     // `cursor` is deliberately absent: scrubbing is handled by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, strategy, benchmarkEquity, timeframe, showBenchmark, splitIndex, palette]);
+  }, [bars, strategy, benchmarkEquity, timeframe, showBenchmark, splitIndex, palette, compared, seriesColors]);
 
   useEffect(() => {
     applyCursor.current?.(cursor);

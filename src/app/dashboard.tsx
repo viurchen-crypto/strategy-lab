@@ -25,8 +25,25 @@ import {
   type RankableMetric,
   type RankingCriterion,
 } from "@/lib/ranking";
-import { STRATEGY_CATALOG, type StrategyFamily } from "@/lib/strategies/catalog";
-import { HELP_LINES, runCommand, type TerminalConfig } from "@/lib/terminal/commands";
+import {
+  HORIZON_LABELS,
+  HORIZON_TIMEFRAME,
+  HORIZONS,
+  STRATEGY_CATALOG,
+  type Horizon,
+  type StrategyFamily,
+} from "@/lib/strategies/catalog";
+import {
+  classifyInput,
+  COMPARE_LIMIT,
+  HELP_LINES,
+  runCommand,
+  type TerminalConfig,
+} from "@/lib/terminal/commands";
+import { buildContext as buildHermesContext } from "@/lib/hermes/prompt";
+import { ChatPanel } from "./chat/chat-panel";
+import { FloatingPanel } from "./chat/floating-panel";
+import { useHermes } from "./chat/use-hermes";
 import { Hint } from "./hint";
 import { Palette, type PaletteAction } from "./palette";
 import { Playback } from "./playback";
@@ -210,6 +227,12 @@ export function Dashboard() {
   const [history, setHistory] = useState<RunHistoryRow[] | null>(null);
   const [search, setSearch] = useState("");
   const [family, setFamily] = useState<StrategyFamily | null>(null);
+  const [horizon, setHorizon] = useState<Horizon>("all");
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  /** Bumped to pop the chat window open; the panel owns collapsed/expanded itself. */
+  const [chatOpenRequest, setChatOpenRequest] = useState(0);
+  const [chatCollapsed, setChatCollapsed] = useState(true);
+  const [seenAnswers, setSeenAnswers] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const requestId = useRef(0);
   const lineId = useRef(WELCOME.length);
@@ -366,16 +389,27 @@ export function Dashboard() {
     return ranked.filter(
       (strategy) =>
         (family === null || strategy.family === family) &&
+        (horizon === "all" || strategy.horizon === horizon) &&
         (needle === "" ||
           strategy.name.toLowerCase().includes(needle) ||
           strategy.id.toLowerCase().includes(needle) ||
           strategy.family.includes(needle)),
     );
-  }, [ranked, search, family]);
+  }, [ranked, search, family, horizon]);
 
   const selected: (StrategyRun & { score?: number }) | undefined = useMemo(
     () => ranked.find((strategy) => strategy.id === selectedId) ?? ranked[0],
     [ranked, selectedId],
+  );
+
+  /** The compared runs, in the order they were picked, minus the focused one. */
+  const compared = useMemo(
+    () =>
+      compareIds
+        .filter((id) => id !== selected?.id)
+        .map((id) => visible.find((strategy) => strategy.id === id))
+        .filter((strategy): strategy is (typeof visible)[number] => strategy !== undefined),
+    [compareIds, visible, selected],
   );
 
   const selectedMeta = STRATEGY_CATALOG.find((strategy) => strategy.id === selected?.id);
@@ -405,6 +439,17 @@ export function Dashboard() {
   const rerun = useCallback(() => {
     void run(config, overrides);
   }, [run, config, overrides]);
+
+  /** Compare is capped: past five curves the chart is a smear, not a comparison. */
+  const toggleCompare = useCallback((strategyId: string) => {
+    setCompareIds((previous) =>
+      previous.includes(strategyId)
+        ? previous.filter((id) => id !== strategyId)
+        : previous.length >= COMPARE_LIMIT
+          ? previous
+          : [...previous, strategyId],
+    );
+  }, []);
 
   const setParameter = (strategyId: string, key: string, value: number) =>
     setOverrides((previous) => ({
@@ -466,6 +511,26 @@ export function Dashboard() {
 
         case "select":
           setSelectedId(result.strategyId);
+          break;
+
+        case "compare":
+          setCompareIds(result.strategyIds);
+          break;
+
+        case "horizon":
+          setHorizon(result.horizon);
+          // A horizon is a bar size as much as a shortlist, so it moves the run.
+          if (result.horizon !== "all") {
+            applyAndRun({ timeframe: HORIZON_TIMEFRAME[result.horizon] as Timeframe });
+          }
+          break;
+
+        case "open":
+          openTab(result.tab);
+          break;
+
+        case "navigate":
+          if (result.target !== "lab") window.location.href = `/${result.target}`;
           break;
 
         case "parameter": {
@@ -553,7 +618,95 @@ export function Dashboard() {
           break;
       }
     },
-    [config, overrides, run, print, openTab, data, ranked, selected, intraday, exportCsv, loadHistory],
+    [
+      config,
+      overrides,
+      run,
+      print,
+      openTab,
+      data,
+      ranked,
+      selected,
+      intraday,
+      exportCsv,
+      loadHistory,
+      applyAndRun,
+    ],
+  );
+
+  /**
+   * What Hermes is told about the screen, rebuilt per turn so a question asked
+   * later is answered against the run that is showing now.
+   */
+  const chatContext = useCallback(() => {
+    if (!data) return "CURRENT RUN\nNothing has been run yet.";
+    const meta = selected ? STRATEGY_CATALOG.find(({ id }) => id === selected.id) : undefined;
+
+    return buildHermesContext({
+      symbol: data.symbol,
+      exchange: data.exchange,
+      timeframe: data.timeframe,
+      barCount: data.barCount,
+      periodStart: formatTimestamp(data.periodStart),
+      periodEnd: formatTimestamp(data.periodEnd),
+      currency: data.currency,
+      benchmarkReturn: data.benchmark.metrics.totalReturn,
+      benchmarkSharpe: data.benchmark.metrics.sharpe,
+      page: "the lab — chart, leaderboard and performance panels",
+      leaders: ranked.slice(0, 6).map((strategy, index) => ({
+        rank: index + 1,
+        id: strategy.id,
+        name: strategy.name,
+        family: strategy.family,
+        totalReturn: strategy.metrics.totalReturn,
+        sharpe: strategy.metrics.sharpe,
+        maxDrawdown: strategy.metrics.maxDrawdown,
+        tradeCount: strategy.metrics.tradeCount,
+      })),
+      selected: selected
+        ? {
+            id: selected.id,
+            name: selected.name,
+            family: selected.family,
+            description: selected.description,
+            evidence: meta ? `${meta.evidence.title} — ${meta.evidence.note}` : "not recorded",
+            parameters: selected.parameters,
+            totalReturn: selected.metrics.totalReturn,
+            cagr: selected.metrics.cagr,
+            sharpe: selected.metrics.sharpe,
+            sortino: selected.metrics.sortino,
+            maxDrawdown: selected.metrics.maxDrawdown,
+            calmar: selected.metrics.calmar,
+            winRate: selected.metrics.winRate,
+            profitFactor: selected.metrics.profitFactor,
+            tradeCount: selected.metrics.tradeCount,
+            exposure: selected.metrics.exposure,
+            inSampleSharpe: selected.inSample?.sharpe,
+            outOfSampleSharpe: selected.outOfSample?.sharpe,
+            warnings: selected.warnings ?? [],
+          }
+        : undefined,
+    });
+  }, [data, ranked, selected]);
+
+  const hermes = useHermes(chatContext);
+
+  /**
+   * One box, two jobs. `classifyInput` decides which — a slash or a known verb
+   * is a command, a sentence is a question for Hermes — so the terminal keeps
+   * working exactly as it did and plain English stops being an error.
+   */
+  const onSubmitLine = useCallback(
+    (raw: string) => {
+      const { kind, text } = classifyInput(raw);
+      if (kind === "command") {
+        onCommand(text);
+        return;
+      }
+      setChatOpenRequest((count) => count + 1);
+      void hermes.send(text);
+    },
+    [onCommand, hermes],
   );
 
   /**
@@ -747,6 +900,12 @@ export function Dashboard() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [barCount, print, openTab]);
+
+  // Unread is derived, never stored: no effect has to keep a counter in sync.
+  const answeredCount = hermes.turns.filter(
+    (turn) => turn.role === "assistant" && turn.text.length > 0,
+  ).length;
+  const unreadAnswers = chatCollapsed ? Math.max(0, answeredCount - seenAnswers) : 0;
 
   const notes = data?.notes ?? [];
   const warnings = selected?.warnings ?? [];
@@ -1099,6 +1258,32 @@ export function Dashboard() {
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
+            <div className="family-chips" role="group" aria-label="Holding horizon">
+              {HORIZONS.map((entry) => (
+                <button
+                  type="button"
+                  key={entry}
+                  className={horizon === entry ? "chip on" : "chip"}
+                  aria-pressed={horizon === entry}
+                  title={
+                    entry === "all"
+                      ? "Every horizon"
+                      : `Rules published for ${HORIZON_LABELS[entry].toLowerCase()} holding, on ${
+                          HORIZON_TIMEFRAME[entry]
+                        } bars`
+                  }
+                  onClick={() => {
+                    setHorizon(entry);
+                    // The horizon is a bar size as much as a shortlist.
+                    if (entry !== "all") {
+                      applyAndRun({ timeframe: HORIZON_TIMEFRAME[entry] as Timeframe });
+                    }
+                  }}
+                >
+                  {HORIZON_LABELS[entry]}
+                </button>
+              ))}
+            </div>
             <div className="family-chips" role="group" aria-label="Strategy family">
               {FAMILIES.map((entry) => (
                 <button
@@ -1123,9 +1308,9 @@ export function Dashboard() {
               </div>
             ) : null}
             {shortlist.map((strategy, index) => (
+              <div className="strategy-row" key={strategy.id}>
               <button
                 type="button"
-                key={strategy.id}
                 className={strategy.id === selected?.id ? "strategy selected" : "strategy"}
                 aria-pressed={strategy.id === selected?.id}
                 onClick={() => setSelectedId(strategy.id)}
@@ -1140,6 +1325,22 @@ export function Dashboard() {
                   {formatSignedPercent(strategy.metrics.totalReturn, 1)}
                 </span>
               </button>
+              <button
+                type="button"
+                className={compareIds.includes(strategy.id) ? "compare-toggle on" : "compare-toggle"}
+                aria-pressed={compareIds.includes(strategy.id)}
+                aria-label={`Compare ${strategy.name}`}
+                title={`Overlay ${strategy.name} on the chart`}
+                style={
+                  compareIds.includes(strategy.id)
+                    ? { color: `var(--series-${compareIds.indexOf(strategy.id) + 1})` }
+                    : undefined
+                }
+                onClick={() => toggleCompare(strategy.id)}
+              >
+                <span aria-hidden="true">{compareIds.includes(strategy.id) ? "◉" : "○"}</span>
+              </button>
+              </div>
             ))}
             {!firstLoad && shortlist.length === 0 ? (
               <p className="empty">
@@ -1163,6 +1364,27 @@ export function Dashboard() {
                   <b>{formatPrice(lastClose)}</b>
                   <span className="faint">{data.currency}</span>
                 </span>
+                {compared.length > 0 ? (
+                  <span className="series-legend">
+                    {compared.map((entry) => (
+                      <button
+                        type="button"
+                        key={entry.id}
+                        title={`Stop comparing ${entry.name}`}
+                        onClick={() => toggleCompare(entry.id)}
+                      >
+                        <span
+                          className="swatch"
+                          style={{
+                            background: `var(--series-${compareIds.indexOf(entry.id) + 1})`,
+                          }}
+                          aria-hidden="true"
+                        />
+                        {entry.code}
+                      </button>
+                    ))}
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   className={showBenchmark ? "toggle on" : "toggle"}
@@ -1184,6 +1406,7 @@ export function Dashboard() {
                 <PriceChart
                   bars={data.bars}
                   strategy={data.strategies.find(({ id }) => id === selected.id) ?? selected}
+                  compared={compared}
                   benchmarkEquity={data.benchmark.equity}
                   timeframe={data.timeframe}
                   showBenchmark={showBenchmark}
@@ -1554,7 +1777,37 @@ export function Dashboard() {
         </section>
       </div>
 
-      <CommandLine onSubmit={onCommand} onNote={(text) => print("note", text)} busy={loading} inputRef={commandRef} />
+      <CommandLine
+        onSubmit={onSubmitLine}
+        onNote={(text) => print("note", text)}
+        busy={loading}
+        inputRef={commandRef}
+      />
+
+      <FloatingPanel
+        title="Hermes"
+        unread={unreadAnswers}
+        openRequest={chatOpenRequest}
+        onCollapsedChange={(collapsed) => {
+          setChatCollapsed(collapsed);
+          if (!collapsed) setSeenAnswers(answeredCount);
+        }}
+        headerExtra={
+          <span className={`chat-state ${hermes.state}`} title={`Bridge: ${hermes.state}`}>
+            <span className="dot" aria-hidden="true" />
+            <span className="visually-hidden">Hermes is {hermes.state}</span>
+          </span>
+        }
+      >
+        <ChatPanel
+          turns={hermes.turns}
+          streaming={hermes.streaming}
+          state={hermes.state}
+          onSend={hermes.send}
+          onStop={hermes.stop}
+          onCommand={onCommand}
+        />
+      </FloatingPanel>
 
       <footer>
         <span>

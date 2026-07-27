@@ -1,5 +1,33 @@
 export type StrategyFamily = "trend" | "breakout" | "momentum" | "mean-reversion";
 
+/**
+ * The holding period a rule was published for. A 10/30 SMA on daily bars and a
+ * 10-month SMA on monthly bars are not the same rule at different zoom levels —
+ * they were researched separately and behave differently — so the horizon is an
+ * axis of the catalog rather than a view of it.
+ *
+ * "all" is not a horizon a strategy carries; it is the absence of a filter.
+ */
+export const HORIZONS = ["daily", "swing", "position", "long", "all"] as const;
+export type Horizon = (typeof HORIZONS)[number];
+export type StrategyHorizon = Exclude<Horizon, "all">;
+
+/** The bar size each horizon is meant to be traded on. */
+export const HORIZON_TIMEFRAME: Record<StrategyHorizon, "1D" | "1W" | "1M"> = {
+  daily: "1D",
+  swing: "1D",
+  position: "1W",
+  long: "1M",
+};
+
+export const HORIZON_LABELS: Record<Horizon, string> = {
+  daily: "Daily",
+  swing: "Swing",
+  position: "Position",
+  long: "Long term",
+  all: "All",
+};
+
 /** Signal generator a strategy dispatches to. Kept as a tag so the catalog stays serializable. */
 export type StrategyKind =
   | "sma"
@@ -39,6 +67,7 @@ export interface StrategyMetadata {
   readonly name: string;
   readonly kind: StrategyKind;
   readonly family: StrategyFamily;
+  readonly horizon: StrategyHorizon;
   readonly description: string;
   /** Bars of history the signal needs before it can take a position. */
   readonly warmup: number;
@@ -111,6 +140,16 @@ const volTargetEvidence: EvidenceReference = {
   url: "https://doi.org/10.1111/jofi.12513",
   note: "Moreira and Muir show scaling exposure down in high-volatility regimes improves risk-adjusted returns.",
 };
+const fiftyTwoWeekEvidence: EvidenceReference = {
+  title: "The 52-Week High and Momentum Investing",
+  url: "https://doi.org/10.1111/j.1540-6261.2004.00695.x",
+  note: "George and Hwang find nearness to the 52-week high predicts returns better than past return itself.",
+};
+const stageEvidence: EvidenceReference = {
+  title: "Secrets for Profiting in Bull and Bear Markets",
+  url: "https://www.mhprofessional.com/secrets-for-profiting-in-bull-and-bear-markets-9781556236839-usa",
+  note: "Weinstein's stage analysis uses the 30-week moving average to separate accumulation from decline.",
+};
 const dualMomentumEvidence: EvidenceReference = {
   title: "Dual Momentum Investing",
   url: "https://www.mhprofessional.com/dual-momentum-investing-an-innovative-strategy-for-higher-returns-with-lower-risk-9780071849449-usa",
@@ -129,6 +168,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "SMA 10/30 Cross",
     kind: "sma",
     family: "trend",
+    horizon: "daily",
     description: "Long while the 10-bar mean sits above the 30-bar mean, short while it sits below.",
     warmup: 30,
     parameters: [p("fast", "Fast SMA", 10, 2, 200), p("slow", "Slow SMA", 30, 3, 400)],
@@ -140,6 +180,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "SMA 20/50 Cross",
     kind: "sma",
     family: "trend",
+    horizon: "swing",
     description: "Medium-horizon trend filter using conventional one-month and quarter-length means.",
     warmup: 50,
     parameters: [p("fast", "Fast SMA", 20, 2, 200), p("slow", "Slow SMA", 50, 3, 400)],
@@ -151,6 +192,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "SMA 50/200 Cross",
     kind: "sma",
     family: "trend",
+    horizon: "position",
     description: "The widely followed golden-cross and death-cross long-horizon regime filter.",
     warmup: 200,
     parameters: [p("fast", "Fast SMA", 50, 2, 200), p("slow", "Slow SMA", 200, 3, 400)],
@@ -162,6 +204,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "Donchian 20 Breakout",
     kind: "donchian",
     family: "breakout",
+    horizon: "daily",
     description: "Flip long on a new 20-bar closing high and short on a new 20-bar closing low.",
     warmup: 21,
     parameters: [p("lookback", "Channel lookback", 20, 2, 252)],
@@ -173,6 +216,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "Donchian 55 Breakout",
     kind: "donchian",
     family: "breakout",
+    horizon: "swing",
     description: "The slower classic channel break, trading fewer and longer-held extensions.",
     warmup: 56,
     parameters: [p("lookback", "Channel lookback", 55, 2, 252)],
@@ -184,6 +228,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "3-Month Momentum",
     kind: "momentum",
     family: "momentum",
+    horizon: "swing",
     description: "Hold in the direction of the trailing 63-bar return.",
     warmup: 63,
     parameters: [p("lookback", "Return lookback", 63, 2, 504)],
@@ -195,6 +240,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "6-Month Momentum",
     kind: "momentum",
     family: "momentum",
+    horizon: "position",
     description: "Half-year trailing return as a slower directional signal.",
     warmup: 126,
     parameters: [p("lookback", "Return lookback", 126, 2, 504)],
@@ -206,6 +252,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "12-Month Momentum",
     kind: "momentum",
     family: "momentum",
+    horizon: "long",
     description: "The canonical twelve-month lookback, the slowest trend exposure in the set.",
     warmup: 252,
     parameters: [p("lookback", "Return lookback", 252, 2, 504)],
@@ -217,6 +264,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "RSI 14 Reversion",
     kind: "rsi",
     family: "mean-reversion",
+    horizon: "daily",
     description: "Buy below 30 and sell above 70 using Wilder's standard RSI configuration.",
     warmup: 15,
     parameters: [
@@ -232,6 +280,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "Bollinger 20/2 Reversion",
     kind: "bollinger",
     family: "mean-reversion",
+    horizon: "daily",
     description: "Fade closes beyond a 20-bar envelope set two standard deviations from its mean.",
     warmup: 20,
     parameters: [p("period", "Mean period", 20, 2, 252), p("deviations", "Deviations", 2, 0.5, 5, 0.1)],
@@ -243,6 +292,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "EMA 12/26 Cross",
     kind: "ema",
     family: "trend",
+    horizon: "daily",
     description: "Exponential means react faster than simple ones; long while the 12 leads the 26.",
     warmup: 26,
     parameters: [p("fast", "Fast EMA", 12, 2, 200), p("slow", "Slow EMA", 26, 3, 400)],
@@ -254,6 +304,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "200-Bar Trend Filter",
     kind: "trend-filter",
     family: "trend",
+    horizon: "position",
     description: "The single-line regime rule: long above the 200-bar mean, short below it.",
     warmup: 200,
     parameters: [p("period", "Mean period", 200, 5, 400)],
@@ -265,6 +316,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "MACD 12/26/9",
     kind: "macd",
     family: "trend",
+    horizon: "daily",
     description: "Trade the MACD line against its nine-period signal line.",
     warmup: 34,
     parameters: [
@@ -280,6 +332,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "ADX 14 Filtered Trend",
     kind: "adx",
     family: "trend",
+    horizon: "daily",
     description: "Follow the dominant directional index, but only while ADX confirms a trend.",
     warmup: 28,
     parameters: [p("period", "ADX period", 14, 2, 100), p("threshold", "ADX threshold", 25, 5, 60)],
@@ -291,6 +344,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "MA Envelope 20/3%",
     kind: "envelope",
     family: "mean-reversion",
+    horizon: "daily",
     description: "Fade closes more than three percent away from the 20-bar mean.",
     warmup: 20,
     parameters: [
@@ -305,6 +359,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "Z-Score 20/2 Reversion",
     kind: "zscore",
     family: "mean-reversion",
+    horizon: "daily",
     description: "Fade closes two standard deviations from a 20-bar mean, sized on the raw score.",
     warmup: 20,
     parameters: [
@@ -319,6 +374,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "Stochastic 14 Reversal",
     kind: "stochastic",
     family: "mean-reversion",
+    horizon: "daily",
     description: "Buy when %K sits below 20 within its 14-bar range and sell above 80.",
     warmup: 14,
     parameters: [
@@ -334,6 +390,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "ATR Channel 20/2",
     kind: "atr-channel",
     family: "breakout",
+    horizon: "swing",
     description: "Break out of a channel measured in average true ranges rather than fixed bars.",
     warmup: 21,
     parameters: [
@@ -348,6 +405,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "Vol-Filtered Trend 100",
     kind: "vol-trend",
     family: "trend",
+    horizon: "position",
     description: "Hold the 100-bar trend only while realized volatility stays under the target.",
     warmup: 100,
     parameters: [
@@ -363,6 +421,7 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
     name: "Dual Momentum 126/200",
     kind: "dual-momentum",
     family: "momentum",
+    horizon: "long",
     description: "Take a side only when the trailing return and the long trend point the same way.",
     warmup: 200,
     parameters: [
@@ -370,6 +429,141 @@ export const STRATEGY_CATALOG: readonly StrategyMetadata[] = [
       p("trend", "Trend period", 200, 5, 400),
     ],
     evidence: dualMomentumEvidence,
+  },
+  {
+    id: "faber-10m",
+    code: "21",
+    name: "Faber 10-Month Timing",
+    kind: "trend-filter",
+    family: "trend",
+    horizon: "long",
+    description:
+      "The published tactical allocation rule: hold while the close is above its 10-month mean, stand aside below it. Meant for monthly bars.",
+    warmup: 10,
+    parameters: [p("period", "Mean period", 10, 3, 36)],
+    evidence: trendEvidence,
+  },
+  {
+    id: "sma-6-12m",
+    code: "22",
+    name: "SMA 6/12-Month Cross",
+    kind: "sma",
+    family: "trend",
+    horizon: "long",
+    description: "A half-year mean crossing a one-year mean — the slowest crossover in the catalog.",
+    warmup: 12,
+    parameters: [p("fast", "Fast SMA", 6, 2, 24), p("slow", "Slow SMA", 12, 3, 60)],
+    evidence: trendEvidence,
+  },
+  {
+    id: "momentum-12m",
+    code: "23",
+    name: "12-Month Absolute Momentum",
+    kind: "momentum",
+    family: "momentum",
+    horizon: "long",
+    description:
+      "Hold in the direction of the trailing twelve-month return, measured on monthly bars rather than daily ones.",
+    warmup: 12,
+    parameters: [p("lookback", "Return lookback", 12, 2, 60)],
+    evidence: timeSeriesEvidence,
+  },
+  {
+    id: "dual-momentum-12m",
+    code: "24",
+    name: "Dual Momentum 12/10-Month",
+    kind: "dual-momentum",
+    family: "momentum",
+    horizon: "long",
+    description:
+      "Antonacci's pairing at its published monthly cadence: a side only when the year's return and the 10-month trend agree.",
+    warmup: 12,
+    parameters: [p("lookback", "Return lookback", 12, 2, 60), p("trend", "Trend period", 10, 3, 36)],
+    evidence: dualMomentumEvidence,
+  },
+  {
+    id: "vol-trend-12m",
+    code: "25",
+    name: "Vol-Filtered Trend 12-Month",
+    kind: "vol-trend",
+    family: "trend",
+    horizon: "long",
+    description:
+      "The long trend, held only while realized volatility stays under target — exposure scaled down in turbulent regimes.",
+    warmup: 12,
+    parameters: [
+      p("trend", "Trend period", 12, 3, 60),
+      p("vol", "Volatility period", 6, 2, 36),
+      p("maxVol", "Max per-bar vol", 0.08, 0.005, 0.4, 0.005),
+    ],
+    evidence: volTargetEvidence,
+  },
+  {
+    id: "donchian-52w",
+    code: "26",
+    name: "52-Week High Breakout",
+    kind: "donchian",
+    family: "breakout",
+    horizon: "position",
+    description:
+      "Flip long on a new one-year closing high. Nearness to the 52-week high is itself the documented predictor.",
+    warmup: 53,
+    parameters: [p("lookback", "Channel lookback", 52, 4, 260)],
+    evidence: fiftyTwoWeekEvidence,
+  },
+  {
+    id: "trend-30w",
+    code: "27",
+    name: "30-Week Stage Filter",
+    kind: "trend-filter",
+    family: "trend",
+    horizon: "position",
+    description:
+      "Weinstein's regime line: above the 30-week mean is accumulation and advance, below it is distribution and decline.",
+    warmup: 30,
+    parameters: [p("period", "Mean period", 30, 5, 120)],
+    evidence: stageEvidence,
+  },
+  {
+    id: "momentum-26w",
+    code: "28",
+    name: "26-Week Momentum",
+    kind: "momentum",
+    family: "momentum",
+    horizon: "position",
+    description: "The six-month lookback at weekly cadence, where the original cross-sectional work measured it.",
+    warmup: 26,
+    parameters: [p("lookback", "Return lookback", 26, 2, 120)],
+    evidence: crossSectionEvidence,
+  },
+  {
+    id: "donchian-13w",
+    code: "29",
+    name: "Quarterly Channel Breakout",
+    kind: "donchian",
+    family: "breakout",
+    horizon: "position",
+    description: "A thirteen-week channel — one quarter of range — traded on weekly closes.",
+    warmup: 14,
+    parameters: [p("lookback", "Channel lookback", 13, 3, 104)],
+    evidence: donchianEvidence,
+  },
+  {
+    id: "macd-weekly",
+    code: "30",
+    name: "Weekly MACD 12/26/9",
+    kind: "macd",
+    family: "trend",
+    horizon: "swing",
+    description:
+      "The conventional MACD settings read on weekly bars, which is how they were originally charted.",
+    warmup: 34,
+    parameters: [
+      p("fast", "Fast EMA", 12, 2, 100),
+      p("slow", "Slow EMA", 26, 3, 200),
+      p("signal", "Signal EMA", 9, 2, 100),
+    ],
+    evidence: macdEvidence,
   },
 ] as const;
 

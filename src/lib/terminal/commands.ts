@@ -1,7 +1,7 @@
 import { INSTRUMENTS } from "../instruments";
 import { TIMEFRAMES, type Timeframe } from "../market/timeframes";
 import { RANKABLE_METRICS, type RankableMetric } from "../ranking";
-import { getStrategy, STRATEGY_CATALOG } from "../strategies/catalog";
+import { getStrategy, HORIZONS, STRATEGY_CATALOG, type Horizon } from "../strategies/catalog";
 
 export type Direction = "long" | "short" | "both";
 
@@ -29,7 +29,26 @@ export type CommandResult =
   | { kind: "select"; strategyId: string; lines: string[] }
   | { kind: "parameter"; strategyId: string; key: string; value: number; lines: string[] }
   | { kind: "query"; query: "top" | "trades" | "metrics"; count?: number; lines: string[] }
+  | { kind: "compare"; strategyIds: string[]; lines: string[] }
+  | { kind: "horizon"; horizon: Horizon; lines: string[] }
+  | { kind: "navigate"; target: "lab" | "learn" | "screener"; lines: string[] }
+  | { kind: "open"; tab: WorkspaceTabId; lines: string[] }
   | { kind: "action"; action: "clear" | "export" | "history" | "help"; lines: string[] };
+
+/** Detail views the workspace can show; `open` addresses them by name. */
+export const WORKSPACE_TAB_IDS = [
+  "leaderboard",
+  "trades",
+  "tuning",
+  "history",
+  "terminal",
+] as const;
+export type WorkspaceTabId = (typeof WORKSPACE_TAB_IDS)[number];
+
+export const PAGES = ["lab", "learn", "screener"] as const;
+
+/** More curves than this on one chart is a smear, not a comparison. */
+export const COMPARE_LIMIT = 5;
 
 export const COMMANDS = [
   "run",
@@ -45,6 +64,10 @@ export const COMMANDS = [
   "explain",
   "param",
   "select",
+  "compare",
+  "horizon",
+  "open",
+  "go",
   "history",
   "export",
   "help",
@@ -80,8 +103,30 @@ export const HELP_LINES = [
   "explain <id>             describe a strategy and its evidence",
   "select <id>              focus a strategy in the panels",
   "param <id> <key> <val>   override a strategy parameter",
+  "compare <id...>          overlay up to 5 equity curves, 'compare off' clears",
+  "horizon <name>           daily | swing | position | long | all",
+  "open <view>              leaderboard trades tuning history terminal",
+  "go <page>                lab | learn | screener",
   "history | export | clear | help",
 ];
+
+/**
+ * The command line does double duty: it drives the terminal and it talks to
+ * Hermes. A leading slash always means command, a known verb means command, and
+ * everything else is a sentence for the tutor — so "run BTC-USD 4h" still runs
+ * and "why did this rule lose money" gets answered instead of erroring.
+ */
+export function classifyInput(line: string): { kind: "command" | "chat"; text: string } {
+  const trimmed = line.trim();
+  if (trimmed.startsWith("/")) return { kind: "command", text: trimmed.slice(1).trim() };
+
+  const verb = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
+  const isVerb = (COMMANDS as readonly string[]).includes(verb);
+  // A verb followed by a question mark is a question about the verb, not the verb.
+  return isVerb && !trimmed.endsWith("?")
+    ? { kind: "command", text: trimmed }
+    : { kind: "chat", text: trimmed };
+}
 
 const parseDate = (value: string): number | undefined => {
   const stamp = Date.parse(`${value}T00:00:00Z`);
@@ -285,6 +330,43 @@ export function runCommand(line: string, config: TerminalConfig): CommandResult 
       };
     }
 
+    case "compare": {
+      if (args[0]?.toLowerCase() === "off" || args.length === 0) {
+        return { kind: "compare", strategyIds: [], lines: ["Comparison cleared"] };
+      }
+      const unknown = args.filter((id) => !getStrategy(id));
+      if (unknown.length > 0) return error(`Unknown strategy: ${unknown.join(" ")}`);
+      if (args.length > COMPARE_LIMIT) {
+        return error(`At most ${COMPARE_LIMIT} strategies can be compared at once`);
+      }
+      const ids = [...new Set(args.map((id) => getStrategy(id)!.id))];
+      return { kind: "compare", strategyIds: ids, lines: [`Comparing ${ids.join(" ")}`] };
+    }
+
+    case "horizon": {
+      const value = args[0]?.toLowerCase();
+      if (!value || !(HORIZONS as readonly string[]).includes(value)) {
+        return error(`Usage: horizon <${HORIZONS.join("|")}>`);
+      }
+      return { kind: "horizon", horizon: value as Horizon, lines: [`Horizon: ${value}`] };
+    }
+
+    case "open": {
+      const value = args[0]?.toLowerCase();
+      if (!value || !(WORKSPACE_TAB_IDS as readonly string[]).includes(value)) {
+        return error(`Usage: open <${WORKSPACE_TAB_IDS.join("|")}>`);
+      }
+      return { kind: "open", tab: value as WorkspaceTabId, lines: [] };
+    }
+
+    case "go": {
+      const value = args[0]?.toLowerCase();
+      if (!value || !(PAGES as readonly string[]).includes(value)) {
+        return error(`Usage: go <${PAGES.join("|")}>`);
+      }
+      return { kind: "navigate", target: value as (typeof PAGES)[number], lines: [] };
+    }
+
     // Read-only printers: the dashboard holds the results, so it renders these.
     case "top":
     case "trades":
@@ -328,6 +410,14 @@ export function complete(line: string): string[] {
     case "select":
     case "param":
       return parts.length <= 2 ? starts(STRATEGY_CATALOG.map(({ id }) => id)) : [];
+    case "compare":
+      return starts(STRATEGY_CATALOG.map(({ id }) => id));
+    case "horizon":
+      return starts(HORIZONS);
+    case "open":
+      return starts(WORKSPACE_TAB_IDS);
+    case "go":
+      return starts(PAGES);
     default:
       return [];
   }

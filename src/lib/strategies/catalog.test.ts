@@ -1,18 +1,37 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultParameters, getStrategy, STRATEGY_CATALOG } from "./catalog";
+import {
+  defaultParameters,
+  getStrategy,
+  HORIZON_TIMEFRAME,
+  STRATEGY_CATALOG,
+  type StrategyHorizon,
+} from "./catalog";
+
+const CATALOG_SIZE = 30;
 
 describe("STRATEGY_CATALOG", () => {
-  it("contains exactly 20 uniquely identified default strategies", () => {
-    expect(STRATEGY_CATALOG).toHaveLength(20);
-    expect(new Set(STRATEGY_CATALOG.map(({ id }) => id)).size).toBe(20);
-    expect(new Set(STRATEGY_CATALOG.map(({ code }) => code)).size).toBe(20);
+  it("contains uniquely identified default strategies", () => {
+    expect(STRATEGY_CATALOG).toHaveLength(CATALOG_SIZE);
+    expect(new Set(STRATEGY_CATALOG.map(({ id }) => id)).size).toBe(CATALOG_SIZE);
+    expect(new Set(STRATEGY_CATALOG.map(({ code }) => code)).size).toBe(CATALOG_SIZE);
   });
 
   it("numbers the display codes sequentially from 01", () => {
     expect(STRATEGY_CATALOG.map(({ code }) => code)).toEqual(
-      Array.from({ length: 20 }, (_, index) => String(index + 1).padStart(2, "0")),
+      Array.from({ length: CATALOG_SIZE }, (_, index) => String(index + 1).padStart(2, "0")),
     );
+  });
+
+  it("gives every horizon a catalog of its own", () => {
+    const byHorizon = new Map<StrategyHorizon, number>();
+    for (const strategy of STRATEGY_CATALOG) {
+      byHorizon.set(strategy.horizon, (byHorizon.get(strategy.horizon) ?? 0) + 1);
+    }
+    for (const horizon of Object.keys(HORIZON_TIMEFRAME) as StrategyHorizon[]) {
+      // A horizon with one rule in it is a label, not a catalog.
+      expect(byHorizon.get(horizon) ?? 0).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it("gives every strategy a signal kind the runner can dispatch", () => {
