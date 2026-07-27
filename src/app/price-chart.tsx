@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { BarTuple, StrategyRun } from "@/lib/engine";
 import { isIntraday } from "@/lib/format";
 
@@ -16,16 +16,70 @@ interface PriceChartProps {
   splitIndex: number;
 }
 
-const COLORS = {
-  up: "#43e6a0",
+interface ChartPalette {
+  up: string;
+  down: string;
+  equity: string;
+  benchmark: string;
+  split: string;
+  grid: string;
+  text: string;
+  border: string;
+}
+
+/** The dark values, used on the server and as the floor if a token is missing. */
+const FALLBACK: ChartPalette = {
+  up: "#3fdf9c",
   down: "#ff5f70",
-  equity: "#19d3f3",
-  benchmark: "#5b6b76",
-  split: "#f5c66d",
-  grid: "#141e24",
-  text: "#71818a",
-  border: "#233039",
+  equity: "#35d6f5",
+  benchmark: "#62717c",
+  split: "#f6c96b",
+  grid: "#121b21",
+  text: "#7d8f9a",
+  border: "#1e2b34",
 };
+
+/**
+ * The chart is a canvas, so it cannot inherit CSS. It reads the same
+ * `--chart-*` tokens the stylesheet defines instead, which is what makes the
+ * light theme a token swap rather than a second chart configuration.
+ */
+function readPalette(): ChartPalette {
+  if (typeof window === "undefined") return FALLBACK;
+  const style = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) =>
+    style.getPropertyValue(`--chart-${name}`).trim() || fallback;
+
+  return {
+    up: token("up", FALLBACK.up),
+    down: token("down", FALLBACK.down),
+    equity: token("equity", FALLBACK.equity),
+    benchmark: token("bench", FALLBACK.benchmark),
+    split: token("split", FALLBACK.split),
+    grid: token("grid", FALLBACK.grid),
+    text: token("text", FALLBACK.text),
+    border: token("border", FALLBACK.border),
+  };
+}
+
+/**
+ * Republishes the palette whenever the theme attribute on the root changes,
+ * so flipping to light mode rebuilds the chart instead of leaving dark candles
+ * on a white panel.
+ */
+function useChartPalette(): ChartPalette {
+  const [palette, setPalette] = useState<ChartPalette>(FALLBACK);
+
+  useEffect(() => {
+    const sync = () => setPalette(readPalette());
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, { attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+
+  return palette;
+}
 
 /**
  * Two stacked panes: executed price with trade markers on top, account equity
@@ -46,6 +100,7 @@ export function PriceChart({
 }: PriceChartProps) {
   const container = useRef<HTMLDivElement>(null);
   const applyCursor = useRef<((index: number) => void) | null>(null);
+  const palette = useChartPalette();
 
   useEffect(() => {
     const element = container.current;
@@ -63,41 +118,41 @@ export function PriceChart({
       const chart = createChart(element, {
         layout: {
           background: { color: "transparent" },
-          textColor: COLORS.text,
+          textColor: palette.text,
           fontSize: 10,
           fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-          panes: { separatorColor: COLORS.border, separatorHoverColor: COLORS.equity },
+          panes: { separatorColor: palette.border, separatorHoverColor: palette.equity },
         },
         grid: {
-          vertLines: { color: COLORS.grid },
-          horzLines: { color: COLORS.grid },
+          vertLines: { color: palette.grid },
+          horzLines: { color: palette.grid },
         },
-        rightPriceScale: { borderColor: COLORS.border },
+        rightPriceScale: { borderColor: palette.border },
         timeScale: {
-          borderColor: COLORS.border,
+          borderColor: palette.border,
           timeVisible: isIntraday(timeframe),
           secondsVisible: false,
         },
         crosshair: {
-          vertLine: { color: COLORS.border, labelBackgroundColor: COLORS.equity },
-          horzLine: { color: COLORS.border, labelBackgroundColor: COLORS.equity },
+          vertLine: { color: palette.border, labelBackgroundColor: palette.equity },
+          horzLine: { color: palette.border, labelBackgroundColor: palette.equity },
         },
         autoSize: true,
       });
 
       const price = chart.addSeries(CandlestickSeries, {
-        upColor: COLORS.up,
-        downColor: COLORS.down,
-        borderUpColor: COLORS.up,
-        borderDownColor: COLORS.down,
-        wickUpColor: COLORS.up,
-        wickDownColor: COLORS.down,
+        upColor: palette.up,
+        downColor: palette.down,
+        borderUpColor: palette.up,
+        borderDownColor: palette.down,
+        wickUpColor: palette.up,
+        wickDownColor: palette.down,
         priceLineVisible: false,
       });
 
       const equity = chart.addSeries(
         LineSeries,
-        { color: COLORS.equity, lineWidth: 2, priceLineVisible: false, lastValueVisible: true },
+        { color: palette.equity, lineWidth: 2, priceLineVisible: false, lastValueVisible: true },
         1,
       );
 
@@ -105,7 +160,7 @@ export function PriceChart({
         ? chart.addSeries(
             LineSeries,
             {
-              color: COLORS.benchmark,
+              color: palette.benchmark,
               lineWidth: 1,
               lineStyle: 2,
               priceLineVisible: false,
@@ -154,7 +209,7 @@ export function PriceChart({
               {
                 time: trade.entryTime as never,
                 position: (trade.side === "long" ? "belowBar" : "aboveBar") as never,
-                color: trade.side === "long" ? COLORS.up : COLORS.down,
+                color: trade.side === "long" ? palette.up : palette.down,
                 shape: (trade.side === "long" ? "arrowUp" : "arrowDown") as never,
               },
               ...(trade.exitTime <= lastTime
@@ -162,7 +217,7 @@ export function PriceChart({
                     {
                       time: trade.exitTime as never,
                       position: "inBar" as never,
-                      color: trade.exitReason === "stop" ? COLORS.down : COLORS.text,
+                      color: trade.exitReason === "stop" ? palette.down : palette.text,
                       shape: "circle" as never,
                     },
                   ]
@@ -173,7 +228,7 @@ export function PriceChart({
                 {
                   time: splitTime as never,
                   position: "aboveBar" as never,
-                  color: COLORS.split,
+                  color: palette.split,
                   shape: "square" as never,
                   text: "OOS",
                 },
@@ -199,7 +254,7 @@ export function PriceChart({
     };
     // `cursor` is deliberately absent: scrubbing is handled by the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, strategy, benchmarkEquity, timeframe, showBenchmark, splitIndex]);
+  }, [bars, strategy, benchmarkEquity, timeframe, showBenchmark, splitIndex, palette]);
 
   useEffect(() => {
     applyCursor.current?.(cursor);

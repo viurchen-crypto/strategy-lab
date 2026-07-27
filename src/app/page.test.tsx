@@ -137,21 +137,91 @@ const findInCatalog = (container: HTMLElement, name: string) =>
     return within(list as HTMLElement).getByText(name);
   });
 
+const openTab = (name: RegExp) => fireEvent.click(screen.getByRole("tab", { name }));
+
 describe("strategy dashboard", () => {
-  it("renders every panel of the terminal layout", async () => {
+  it("renders the always-visible panels and the workspace tabs", async () => {
     render(<Home />);
-    await screen.findByText(/\[ STRATEGIES \]/);
-    for (const panel of [
-      "MARKET PLAYBACK",
-      "PERFORMANCE",
-      "PARAMETERS",
-      "LEADERBOARD",
-      "TRADE LOG",
-      "HERMES TERMINAL",
-      "HISTORY",
-    ]) {
-      expect(screen.getByText(`[ ${panel} ]`)).toBeTruthy();
+    await screen.findByText("STRATEGIES");
+    for (const panel of ["MARKET", "PERFORMANCE"]) {
+      expect(screen.getByRole("region", { name: panel })).toBeTruthy();
     }
+    for (const tab of ["LEADERBOARD", "TRADE LOG", "TUNING", "HISTORY", "TERMINAL"]) {
+      expect(screen.getByRole("tab", { name: new RegExp(tab) })).toBeTruthy();
+    }
+    // The leaderboard is what a first-time viewer needs, so it opens on it.
+    expect(screen.getByRole("tab", { name: /LEADERBOARD/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("keeps the execution settings collapsed behind a summary", async () => {
+    render(<Home />);
+    expect(screen.queryByLabelText("Commission in basis points")).toBeNull();
+    expect(screen.getByText("100% size")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /EXECUTION/ }));
+    expect(screen.getByLabelText("Commission in basis points")).toBeTruthy();
+    expect(screen.getByLabelText("Window start date")).toBeTruthy();
+  });
+
+  it("never sends a half-typed number to the engine", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+    fireEvent.click(screen.getByRole("button", { name: /EXECUTION/ }));
+
+    const capital = screen.getByLabelText("Initial capital");
+    // Clearing the box used to commit Number("") === 0 and the run came back
+    // "Too small: expected number to be >0".
+    fireEvent.change(capital, { target: { value: "" } });
+    expect(capital).toHaveValue(null);
+    fireEvent.change(capital, { target: { value: "2" } });
+    fireEvent.change(capital, { target: { value: "25" } });
+    fireEvent.change(capital, { target: { value: "25000" } });
+
+    fireEvent.click(screen.getByRole("button", { name: /APPLY CHANGES/ }));
+    await waitFor(() => {
+      const calls = (fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls;
+      const last = calls.filter(([url]) => url === "/api/backtest").at(-1);
+      expect(JSON.parse(String(last?.[1]?.body))).toMatchObject({ initialCapital: 25_000 });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps an out-of-range entry out of the request", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+    fireEvent.click(screen.getByRole("button", { name: /EXECUTION/ }));
+
+    const size = screen.getByLabelText("Position size percent");
+    fireEvent.change(size, { target: { value: "400" } });
+    fireEvent.blur(size);
+    // 400% is refused, so the field snaps back to the last good value.
+    expect(size).toHaveValue(100);
+  });
+
+  it("replays the window from the start when play is pressed at the end", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+    const slider = screen.getByLabelText("Playback position");
+    await waitFor(() => expect(slider).toHaveValue("2"));
+
+    // At the end the control offers a replay rather than doing nothing.
+    const play = screen.getByRole("button", { name: /REPLAY/ });
+    fireEvent.click(play);
+    expect(slider).toHaveValue("0");
+    expect(screen.getByRole("button", { name: /PAUSE/ })).toBeTruthy();
+  });
+
+  it("marks the run button when the form is ahead of the results", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+    expect(screen.getByRole("button", { name: /RUN BACKTEST/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /EXECUTION/ }));
+    fireEvent.change(screen.getByLabelText("Commission in basis points"), { target: { value: "25" } });
+
+    const apply = await screen.findByRole("button", { name: /APPLY CHANGES/ });
+    fireEvent.click(apply);
+    await waitFor(() => expect(screen.getByRole("button", { name: /RUN BACKTEST/ })).toBeTruthy());
   });
 
   it("offers every supported timeframe", () => {
@@ -178,11 +248,12 @@ describe("strategy dashboard", () => {
     const table = await screen.findByRole("table");
     const rows = await waitFor(() => {
       // The header row is present from the start; wait for the results to land.
+      // Scores are measured off a deferred cursor, so the order settles a tick later.
       const all = within(table).getAllByRole("row").slice(1);
       expect(all).toHaveLength(2);
+      expect(within(all[0]).queryByText("Donchian 20 Breakout")).toBeTruthy();
       return all;
     });
-    expect(within(rows[0]).getByText("Donchian 20 Breakout")).toBeTruthy();
     expect(within(rows[1]).getByText("SMA 10/30 Cross")).toBeTruthy();
   });
 
@@ -225,9 +296,109 @@ describe("strategy dashboard", () => {
   it("hides trades that have not been reached by the playback cursor", async () => {
     const { container } = render(<Home />);
     fireEvent.click(await findInCatalog(container, "SMA 10/30 Cross"));
+    openTab(/TRADE LOG/);
     await waitFor(() => expect(container.querySelectorAll(".log-line")).toHaveLength(2));
 
     fireEvent.change(screen.getByLabelText("Playback position"), { target: { value: "1" } });
     await waitFor(() => expect(container.querySelectorAll(".log-line")).toHaveLength(1));
+  });
+
+  it("keeps the last successful results visible when a rerun fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/runs") {
+          return new Response(JSON.stringify({ runs: [], configured: true }), { status: 200 });
+        }
+        const request = JSON.parse(String(init?.body)) as { symbol: string };
+        return request.symbol === "NOPE"
+          ? new Response(JSON.stringify({ error: 'Unknown symbol "NOPE"' }), { status: 404 })
+          : new Response(JSON.stringify(response), { status: 200 });
+      }),
+    );
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+
+    const symbol = screen.getByLabelText("Symbol");
+    fireEvent.change(symbol, { target: { value: "NOPE" } });
+    fireEvent.submit(symbol);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent('Unknown symbol "NOPE"');
+    expect(screen.getAllByText("SMA 10/30 Cross").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Showing the last successful run/)).toBeTruthy();
+  });
+
+  it("leads with a plain-language verdict on the run", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+    const verdict = screen.getByRole("region", { name: "Run summary" });
+    // The leader, not the first strategy in the catalog, is what the run found.
+    await waitFor(() => expect(verdict).toHaveTextContent(/Donchian 20 Breakout returned \+30.0%/));
+    expect(verdict).toHaveTextContent(/buy & hold returned \+5.0%/);
+    expect(verdict).toHaveTextContent(/No caveats flagged/);
+  });
+
+  it("narrows the catalog by family and by search without touching the ranking", async () => {
+    const { container } = render(<Home />);
+    await waitFor(() =>
+      expect(container.querySelectorAll(".strategy-list .strategy")).toHaveLength(2),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Breakout" }));
+    await waitFor(() =>
+      expect(container.querySelectorAll(".strategy-list .strategy")).toHaveLength(1),
+    );
+    // Filtering is a view of the catalog, so the leaderboard still ranks all of them.
+    expect(within(screen.getByRole("table")).getAllByRole("row").slice(1)).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Breakout" }));
+    fireEvent.change(screen.getByLabelText("Filter strategies"), { target: { value: "sma" } });
+    await waitFor(() => {
+      const list = container.querySelector(".strategy-list") as HTMLElement;
+      expect(within(list).getByText("SMA 10/30 Cross")).toBeTruthy();
+      expect(within(list).queryByText("Donchian 20 Breakout")).toBeNull();
+    });
+  });
+
+  it("opens the command palette with the keyboard and runs an action from it", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    const search = await screen.findByLabelText("Search commands");
+
+    fireEvent.change(search, { target: { value: "bitcoin" } });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
+
+    await waitFor(() => {
+      const calls = (fetch as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls;
+      const last = calls.filter(([url]) => url === "/api/backtest").at(-1);
+      expect(JSON.parse(String(last?.[1]?.body))).toMatchObject({ symbol: "BTC-USD" });
+    });
+    // Running an action closes the palette.
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("switches the theme on the document root", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+    expect(document.documentElement.dataset.theme).not.toBe("light");
+
+    fireEvent.click(screen.getByRole("button", { name: /Switch theme/ }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(window.localStorage.getItem("sl-theme")).toBe("light");
+  });
+
+  it("exposes interactive state and keyboard controls accessibly", async () => {
+    render(<Home />);
+    await screen.findAllByText("SMA 10/30 Cross");
+    expect(screen.getByRole("button", { name: "1D" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /Buy and hold benchmark/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getAllByRole("button", { name: /Donchian 20 Breakout/i })).toHaveLength(2);
+    openTab(/TUNING/);
+    expect(screen.getByRole("button", { name: "Export selected strategy trades as CSV" })).toBeTruthy();
   });
 });

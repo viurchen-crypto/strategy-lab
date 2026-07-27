@@ -83,6 +83,16 @@ describe("runCommand", () => {
     expect(runCommand("param rsi-14-30-70 nope 21", config).kind).toBe("error");
   });
 
+  it("rejects parameter overrides outside the catalog range", () => {
+    expect(runCommand("param rsi-14-30-70 period 1", config)).toMatchObject({ kind: "error" });
+    expect(runCommand("param rsi-14-30-70 period 999", config)).toMatchObject({ kind: "error" });
+  });
+
+  it("rejects malformed run commands instead of treating extra arguments as symbols", () => {
+    expect(runCommand("run QQQ 1D surprise", config)).toMatchObject({ kind: "error" });
+    expect(runCommand("run QQQ 3s", config)).toMatchObject({ kind: "error" });
+  });
+
   it("bounds the count on printing commands", () => {
     expect(runCommand("top 5", config)).toMatchObject({ kind: "query", query: "top", count: 5 });
     expect(runCommand("trades", config)).toMatchObject({ kind: "query", count: undefined });

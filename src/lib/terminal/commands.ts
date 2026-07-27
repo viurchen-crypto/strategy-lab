@@ -121,10 +121,15 @@ export function runCommand(line: string, config: TerminalConfig): CommandResult 
       return { kind: "action", action: "export", lines: ["Exporting the trade log as CSV…"] };
 
     case "run": {
-      for (const argument of args) {
-        if (isTimeframe(argument)) next.timeframe = argument;
-        else next.symbol = argument.toUpperCase();
+      if (args.length > 2) return error("Usage: run [SYMBOL] [TIMEFRAME]");
+      const timeframe = args.find(isTimeframe);
+      const symbols = args.filter((argument) => !isTimeframe(argument));
+      if (symbols.length > 1 || symbols.some((symbol) => !/^[A-Za-z0-9.^=_-]{1,24}$/.test(symbol))) {
+        return error("Usage: run [SYMBOL] [TIMEFRAME]");
       }
+      if (args.length === 2 && !timeframe) return error(`Unknown timeframe "${args[1]}"`);
+      if (timeframe) next.timeframe = timeframe;
+      if (symbols[0]) next.symbol = symbols[0].toUpperCase();
       return {
         kind: "config",
         config: next,
@@ -268,6 +273,9 @@ export function runCommand(line: string, config: TerminalConfig): CommandResult 
       }
       const value = Number(args[2]);
       if (!Number.isFinite(value)) return error(`"${args[2] ?? ""}" is not a number`);
+      if (value < parameter.min || value > parameter.max) {
+        return error(`${parameter.label} must be between ${parameter.min} and ${parameter.max}`);
+      }
       return {
         kind: "parameter",
         strategyId: strategy.id,
