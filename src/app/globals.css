@@ -2337,6 +2337,237 @@ footer {
 }
 
 
+
+/* ── Pages beyond the lab ────────────────────────────────────────── */
+
+.page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  background-image: radial-gradient(var(--bg-grain) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.app-nav a {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  height: calc(var(--row) - 6px);
+  border-radius: var(--radius-sm);
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.app-nav a:hover {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+.app-nav a.active {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.screener-panel {
+  flex: 1;
+  min-height: 0;
+}
+
+.screener-controls {
+  gap: 10px;
+}
+
+.screener-panel .panel-meta {
+  white-space: normal;
+  max-width: 52ch;
+  line-height: 1.35;
+}
+
+.sort {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  padding: 0;
+}
+
+.sort:hover {
+  color: var(--accent);
+}
+
+/* The 52-week position reads as a place on a line, not only as a percentage. */
+.range-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.range-track {
+  position: relative;
+  width: 34px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--line);
+}
+
+.range-mark {
+  position: absolute;
+  top: -2px;
+  width: 3px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: translateX(-1.5px);
+}
+
+/* ── Learn ───────────────────────────────────────────────────────── */
+
+.learn-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  gap: var(--gap);
+}
+
+.learn-chat {
+  display: flex;
+  flex-direction: column;
+}
+
+.learn-chat .chat-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.learn-ask {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface-2);
+}
+
+.learn-ask input {
+  flex: 1;
+  min-width: 0;
+}
+
+.learn-ask button {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 0 14px;
+  height: var(--row);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.glossary {
+  padding: var(--pad);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+
+.horizon-head {
+  margin: 8px 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.term {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 12px 14px;
+}
+
+.term + .term {
+  margin-top: 10px;
+}
+
+.term h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 650;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.term h2 .code {
+  font-family: var(--font-mono);
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+.term-group {
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+}
+
+.term-short {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.term-detail {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 72ch;
+}
+
+.term-seen {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.term-ask {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-2);
+  padding: 3px 11px;
+  font-size: 11px;
+}
+
+.term-ask:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ── Hermes chat ─────────────────────────────────────────────────── */
 
 /* The window floats over everything and is dragged by transform, so it must
@@ -2828,6 +3059,70 @@ footer {
   }
   .palette-scrim {
     padding: 6vh 8px 8px;
+  }
+  .chat-window {
+    width: min(360px, calc(100vw - 16px));
+    height: min(440px, 65vh);
+  }
+  .app-nav a {
+    padding: 0 9px;
+  }
+  .learn-grid {
+    grid-template-rows: minmax(0, 1fr) minmax(280px, 50vh);
+  }
+}
+
+
+/* An ultrawide screen has room for the workspace beside the lab rather than
+   under it, which stops the top row from stretching into a letterbox. */
+@media (min-width: 1800px) {
+  .dashboard-grid {
+    grid-template-columns: 320px minmax(0, 1fr) 360px 440px;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .catalog {
+    grid-area: 1 / 1;
+  }
+  .market {
+    grid-area: 1 / 2;
+  }
+  .performance {
+    grid-area: 1 / 3;
+  }
+  .workspace {
+    grid-area: 1 / 4;
+    min-height: 0;
+  }
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* A short viewport — a laptop with two toolbars, a split screen — must give
+   the chart its height back rather than crushing every panel equally. */
+@media (max-height: 820px) and (min-width: 981px) {
+  :root {
+    --gap: 7px;
+    --pad: 10px;
+  }
+  .dashboard-grid {
+    grid-template-rows: minmax(300px, 60vh) minmax(240px, auto);
+  }
+  .verdict {
+    padding: 8px var(--pad);
+  }
+  .verdict-sub {
+    display: none;
+  }
+  footer {
+    display: none;
+  }
+}
+
+@media (max-width: 1100px) {
+  .learn-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(320px, 45vh);
   }
 }
 

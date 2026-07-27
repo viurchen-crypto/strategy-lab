@@ -1,4 +1,4 @@
-import { INSTRUMENTS } from "../instruments";
+import { UNIVERSE } from "../universe";
 import { TIMEFRAMES, type Timeframe } from "../market/timeframes";
 import { RANKABLE_METRICS, type RankableMetric } from "../ranking";
 import { getStrategy, HORIZONS, STRATEGY_CATALOG, type Horizon } from "../strategies/catalog";
@@ -397,7 +397,7 @@ export function complete(line: string): string[] {
   switch (parts[0].toLowerCase()) {
     case "run":
     case "symbol":
-      return starts(INSTRUMENTS.map(({ symbol }) => symbol));
+      return starts(UNIVERSE.map(({ symbol }) => symbol)).slice(0, 40);
     case "tf":
       return starts(TIMEFRAMES);
     case "side":

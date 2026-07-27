@@ -17,6 +17,7 @@ import {
   signClass,
 } from "@/lib/format";
 import { INSTRUMENTS } from "@/lib/instruments";
+import { CRYPTO, searchUniverse, UNIVERSE } from "@/lib/universe";
 import { buildMetrics } from "@/lib/metrics";
 import {
   DEFAULT_RANKING,
@@ -45,6 +46,7 @@ import { ChatPanel } from "./chat/chat-panel";
 import { FloatingPanel } from "./chat/floating-panel";
 import { useHermes } from "./chat/use-hermes";
 import { Hint } from "./hint";
+import { Nav } from "./nav";
 import { Palette, type PaletteAction } from "./palette";
 import { Playback } from "./playback";
 import { PriceChart } from "./price-chart";
@@ -52,6 +54,20 @@ import { Sparkline } from "./sparkline";
 import { CommandLine, TerminalLog, type TerminalLine } from "./terminal";
 import { DENSITY_ORDER, THEME_ORDER, useAppearance } from "./use-theme";
 import { Verdict } from "./verdict";
+
+/**
+ * A symbol handed over in the URL — a screener row clicking through — opens the
+ * lab on that instrument. Read once at module scope on the client so the very
+ * first backtest is already the right one, rather than running QQQ and then
+ * immediately running it again.
+ */
+function initialSymbol(fallback: string): string {
+  if (typeof window === "undefined") return fallback;
+  const requested = new URLSearchParams(window.location.search).get("symbol");
+  return requested && /^[A-Za-z0-9.^=_-]{1,24}$/.test(requested)
+    ? requested.toUpperCase()
+    : fallback;
+}
 
 const INITIAL_CONFIG: TerminalConfig = {
   symbol: DEFAULT_REQUEST.symbol,
@@ -65,8 +81,16 @@ const INITIAL_CONFIG: TerminalConfig = {
 };
 
 const WELCOME: TerminalLine[] = [
-  { id: 0, tone: "note", text: "Strategy Lab terminal · 20 published strategies on real historical data" },
-  { id: 1, tone: "note", text: "Type help for the command list. Tab completes, ↑ recalls." },
+  {
+    id: 0,
+    tone: "note",
+    text: `Strategy Lab terminal · ${STRATEGY_CATALOG.length} published strategies on real historical data`,
+  },
+  {
+    id: 1,
+    tone: "note",
+    text: "Commands run here; plain English goes to Hermes. help lists the verbs, Tab completes, ↑ recalls.",
+  },
 ];
 
 /** Plain-language notes for the metrics, shown on hover, focus and tap. */
@@ -331,7 +355,11 @@ export function Dashboard() {
     // Deferred by a tick so the first backtest starts after the first paint
     // instead of cascading a render out of the mount effect.
     const timer = setTimeout(() => {
-      void run(INITIAL_CONFIG, {});
+      // After hydration, so a deep link does not make the first client render
+      // disagree with the server's.
+      const first = { ...INITIAL_CONFIG, symbol: initialSymbol(INITIAL_CONFIG.symbol) };
+      if (first.symbol !== INITIAL_CONFIG.symbol) setConfig(first);
+      void run(first, {});
       void loadHistory();
     });
     return () => clearTimeout(timer);
@@ -716,14 +744,16 @@ export function Dashboard() {
    */
   const actions = useMemo<PaletteAction[]>(
     () => [
-      ...INSTRUMENTS.map((instrument) => ({
-        id: `symbol-${instrument.symbol}`,
+      // The whole searchable universe — 500 constituents plus benchmarks and
+      // crypto — which is what makes a list that size usable at all.
+      ...UNIVERSE.map((entry) => ({
+        id: `symbol-${entry.symbol}`,
         group: "Markets",
         glyph: "◆",
-        label: instrument.label,
-        note: instrument.symbol,
-        keywords: `${instrument.group} symbol market`,
-        run: () => applyAndRun({ symbol: instrument.symbol }),
+        label: entry.name,
+        note: entry.symbol,
+        keywords: `${entry.sector} symbol market`,
+        run: () => applyAndRun({ symbol: entry.symbol }),
       })),
       ...TIMEFRAMES.map((timeframe) => ({
         id: `timeframe-${timeframe}`,
@@ -927,8 +957,10 @@ export function Dashboard() {
             ❯
           </span>
           <h1>STRATEGY LAB</h1>
-          <span className="version">v1.2</span>
+          <span className="version">v1.3</span>
         </div>
+
+        <Nav />
 
         <form className="runbar" onSubmit={submit}>
           <div className="symbol-group">
@@ -941,10 +973,15 @@ export function Dashboard() {
               autoComplete="off"
               onChange={(event) => update("symbol", event.target.value.toUpperCase())}
             />
+            {/* Suggestions follow what has been typed: a 500-row datalist is
+                a scroll, but the dozen best matches is a shortlist. */}
             <datalist id="instruments">
-              {INSTRUMENTS.map((instrument) => (
-                <option key={instrument.symbol} value={instrument.symbol}>
-                  {instrument.label}
+              {(config.symbol.trim().length > 0
+                ? searchUniverse(config.symbol, 12)
+                : INSTRUMENTS.map(({ symbol, label }) => ({ symbol, name: label, sector: "" }))
+              ).map((entry) => (
+                <option key={entry.symbol} value={entry.symbol}>
+                  {entry.name}
                 </option>
               ))}
             </datalist>
@@ -956,6 +993,13 @@ export function Dashboard() {
               <option value="" disabled>
                 ▾
               </option>
+              <optgroup label="CRYPTO TOP 5">
+                {CRYPTO.map((entry) => (
+                  <option key={entry.symbol} value={entry.symbol}>
+                    {entry.symbol} — {entry.name}
+                  </option>
+                ))}
+              </optgroup>
               {[...new Set(INSTRUMENTS.map(({ group }) => group))].map((group) => (
                 <optgroup key={group} label={group}>
                   {INSTRUMENTS.filter((instrument) => instrument.group === group).map((instrument) => (
@@ -1035,15 +1079,15 @@ export function Dashboard() {
                 {data.barCount} bars · {formatTimestamp(data.periodStart)} →{" "}
                 {formatTimestamp(data.periodEnd)}
               </span>
-              <span className="status-chip">
+              <span className="status-chip" title={`Price data source: ${data.source}`}>
                 <span className={loading ? "dot busy" : "dot live"} aria-hidden="true" />
-                {loading ? "RUNNING" : `${data.source.toUpperCase()} ${formatRelative(data.fetchedAt)}`}
+                {loading ? "running" : formatRelative(data.fetchedAt)}
               </span>
             </>
           ) : (
             <span className="status-chip">
               <span className="dot busy" aria-hidden="true" />
-              CONNECTING
+              connecting
             </span>
           )}
         </div>
@@ -1810,15 +1854,14 @@ export function Dashboard() {
       </FloatingPanel>
 
       <footer>
-        <span>
-          Next-bar open execution · {config.commissionBps} bps commission · {config.slippageBps} bps
-          slippage · {Math.round(config.positionSizePct * 100)}% of equity per position
-        </span>
+        {/* The costs are already in the settings summary; only the execution
+            rule the reader cannot see anywhere else stays here. */}
+        <span>Signals read at the close, filled at the next open</span>
         <span className="shortcuts">
           <kbd>⌘K</kbd> search <kbd>/</kbd> symbol <kbd>`</kbd> command <kbd>←</kbd>
           <kbd>→</kbd> step <kbd>?</kbd> help
         </span>
-        <span className="muted">Historical data via Yahoo Finance · Educational use, not financial advice</span>
+        <span className="muted">Educational use, not financial advice</span>
       </footer>
 
       {/* Mounted only while open, so every open starts on an empty search. */}
