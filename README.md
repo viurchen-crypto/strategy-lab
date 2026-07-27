@@ -1,12 +1,16 @@
 # Strategy Lab
 
-A terminal-style educational dashboard for exploring historical trading strategies.
+A terminal-style dashboard that backtests twenty published trading strategies on real historical market data.
 
-Current prototype:
-- Deterministic long/short backtest engine with next-bar execution, fees, slippage, P&L, Sharpe, and max drawdown.
-- 20 transparent, evidence-informed built-in strategy definitions.
-- TradingView-style timeframe controls from 5m to 1M.
-- Terminal dashboard prototype with playback, leaderboard, trade log, and Hermes strategy-request panel.
+## What it does
+
+- **Real data.** OHLCV is fetched from Yahoo Finance for any symbol it serves — ETFs, indices (`^GSPC`), equities, crypto (`BTC-USD`), futures (`GC=F`), FX (`EURUSD=X`) — across 5m, 15m, 1h, 4h, 1D, 1W and 1M. 4h bars are deterministically resampled from 1h; intraday history is bounded by what the provider offers.
+- **Deterministic engine.** Signals are read at the bar close and executed at the next bar open, so no decision uses a price it could not have seen. Commission, slippage, position sizing, stop-loss and take-profit are configurable. A bar touching both the stop and the target is assumed to have hit the stop first, and any position still open at the end is liquidated at the last close.
+- **20 strategies** across trend, breakout, momentum and mean reversion — SMA/EMA crossovers, MACD, ADX-filtered trend, Donchian and ATR channels, time-series and dual momentum, RSI, stochastic, Bollinger, z-score and envelope reversion, and a volatility-filtered trend rule. Each carries its published reference, its warm-up requirement, and bounded editable parameters. Defaults are the conventional published values, never fitted to the featured assets.
+- **Honest reporting.** Every run is split into in-sample and out-of-sample halves, compared against buy-and-hold on the same bars and costs, and flagged when the sample is too small, exposure too thin, or out-of-sample Sharpe collapses against in-sample.
+- **Working terminal.** The Hermes panel is a real command console: `run BTC-USD 4h`, `set stop 5`, `range 2023-01-01 2024-01-01`, `rank sharpe calmar`, `explain rsi-14-30-70`, `top 10`, `export csv`. Tab completes, ↑ recalls, `help` lists everything.
+- **Playback.** Scrub or play the finished backtest bar by bar; the chart, metrics, leaderboard and trade log all follow the cursor. Respects `prefers-reduced-motion`.
+- **Persistence.** Supabase caches fetched price series per symbol and timeframe and records run history. Both are optional: without credentials the app falls back to an in-process cache and simply shows no history.
 
 ## Run locally
 
@@ -15,27 +19,26 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3000. Supabase is optional; to enable it, put `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`. The service-role key is read only on the server (`src/lib/db.ts`) and never reaches the browser — both tables have RLS enabled with no policies.
 
 ## Verify
 
 ```bash
-npx vitest run --environment jsdom
+npm run test
 npm run lint
+npm run typecheck
 npm run build
 ```
 
-## Status and limitations
-
-This public deployment is a visual/engine prototype. Authentication, real market-data retrieval, persistent storage, and the custom-strategy approval bridge are not yet connected. It uses illustrative dashboard values and does not place trades.
-
-Educational use only; not financial advice.
-
 ## Deployment
 
-The app is deployed from GitHub through Vercel. Environment secrets are intentionally not required for the current prototype.
+Deployed to Vercel, with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set as environment variables there.
 
-Future work will add secure login and Supabase persistence before any user-specific data is stored.
+## Limitations
+
+Backtests are historical simulations, not evidence that a rule will work. Results ignore taxes and short borrowing costs, assume fills at the modelled prices, and use provider data whose corporate-action treatment varies by asset class. There is no authentication, and user-written custom strategies are not supported.
+
+Educational use only; not financial advice. This app does not place trades.
 
 ## License
 

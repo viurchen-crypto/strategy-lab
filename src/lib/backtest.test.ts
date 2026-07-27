@@ -57,6 +57,111 @@ describe("runBacktest", () => {
   });
 });
 
+describe("runBacktest risk controls", () => {
+  const rising: PriceBar[] = [
+    { time: 1, open: 100, high: 100, low: 100, close: 100 },
+    { time: 2, open: 100, high: 130, low: 90, close: 120 },
+    { time: 3, open: 120, high: 125, low: 115, close: 125 },
+  ];
+
+  it("scales quantity with the position size and leaves the trade count alone", () => {
+    const full = runBacktest({
+      bars: rising,
+      targetPositions: [1, 0, 0],
+      initialCapital: 1_000,
+      commissionBps: 0,
+      slippageBps: 0,
+    });
+    const half = runBacktest({
+      bars: rising,
+      targetPositions: [1, 0, 0],
+      initialCapital: 1_000,
+      commissionBps: 0,
+      slippageBps: 0,
+      positionSizePct: 0.5,
+    });
+
+    expect(half.trades).toHaveLength(full.trades.length);
+    expect(half.trades[0].quantity).toBeCloseTo(full.trades[0].quantity / 2);
+    expect(half.netPnl).toBeCloseTo(full.netPnl / 2);
+  });
+
+  it("closes a long on the entry bar when the range reaches the stop", () => {
+    const result = runBacktest({
+      bars: rising,
+      targetPositions: [1, 1, 1],
+      initialCapital: 1_000,
+      commissionBps: 0,
+      slippageBps: 0,
+      stopLossPct: 0.05,
+    });
+
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0]).toMatchObject({ exitReason: "stop", exitTime: 2, exitPrice: 95 });
+    // The signal never changes, so the stopped side stays blocked afterwards.
+    expect(result.equity.at(-1)?.equity).toBeCloseTo(950);
+  });
+
+  it("takes profit when only the target is reached", () => {
+    const result = runBacktest({
+      bars: rising,
+      targetPositions: [1, 1, 1],
+      initialCapital: 1_000,
+      commissionBps: 0,
+      slippageBps: 0,
+      takeProfitPct: 0.2,
+    });
+
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0]).toMatchObject({ exitReason: "target", exitPrice: 120 });
+  });
+
+  it("assumes the stop filled first when one bar touches both levels", () => {
+    const result = runBacktest({
+      bars: rising,
+      targetPositions: [1, 1, 1],
+      initialCapital: 1_000,
+      commissionBps: 0,
+      slippageBps: 0,
+      stopLossPct: 0.05,
+      takeProfitPct: 0.2,
+    });
+
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0].exitReason).toBe("stop");
+  });
+
+  it("fills at the open when the bar gaps through the stop", () => {
+    const result = runBacktest({
+      bars: [
+        { time: 1, open: 100, high: 100, low: 100, close: 100 },
+        { time: 2, open: 100, high: 101, low: 99, close: 100 },
+        { time: 3, open: 80, high: 82, low: 78, close: 81 },
+      ],
+      targetPositions: [1, 1, 1],
+      initialCapital: 1_000,
+      commissionBps: 0,
+      slippageBps: 0,
+      stopLossPct: 0.05,
+    });
+
+    expect(result.trades[0]).toMatchObject({ exitReason: "stop", exitPrice: 80 });
+  });
+
+  it("rejects a position size outside (0, 1]", () => {
+    expect(() =>
+      runBacktest({
+        bars: rising,
+        targetPositions: [0, 0, 0],
+        initialCapital: 1_000,
+        commissionBps: 0,
+        slippageBps: 0,
+        positionSizePct: 0,
+      }),
+    ).toThrow(RangeError);
+  });
+});
+
 describe("metrics", () => {
   it("calculates annualized Sharpe from periodic equity returns", () => {
     expect(calculateSharpe([100, 110, 110, 110], 4)).toBeCloseTo(1.1547005);
